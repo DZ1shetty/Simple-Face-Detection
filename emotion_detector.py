@@ -1,8 +1,11 @@
 
+
 import cv2
 import os
 import urllib.request
 from fer import FER
+import threading
+import time
 
 # --- Function to Download Models ---
 def download_models():
@@ -57,73 +60,83 @@ MODEL_MEAN_VALUES = (78.4263377603, 87.7689143744, 114.895847746)
 AGE_LIST = ['(0-2)', '(4-6)', '(8-12)', '(15-20)', '(25-32)', '(38-43)', '(48-53)', '(60-100)']
 GENDER_LIST = ['Male', 'Female']
 
-# --- Video Capture ---
-# Start video capture from the default webcam
+
+# --- Video Capture and Threaded Detection ---
+FRAME_WIDTH = 640  # Resize width for performance
+FRAME_SKIP = 2     # Process every Nth frame for detection
+
 cap = cv2.VideoCapture(0)
 if not cap.isOpened():
     print("Error: Could not open video stream.")
     exit()
 
-# --- Main Loop ---
+latest_results = []
+latest_frame = None
+lock = threading.Lock()
+stop_thread = False
+
+def detection_thread():
+    global latest_results, latest_frame, stop_thread
+    frame_count = 0
+    while not stop_thread:
+        with lock:
+            frame = latest_frame.copy() if latest_frame is not None else None
+        if frame is not None:
+            frame_count += 1
+            if frame_count % FRAME_SKIP == 0:
+                # Run detection on resized frame for speed
+                small_frame = cv2.resize(frame, (FRAME_WIDTH, int(frame.shape[0] * FRAME_WIDTH / frame.shape[1])))
+                results = emotion_detector.detect_emotions(small_frame)
+                # Scale results back to original frame size
+                scale_x = frame.shape[1] / small_frame.shape[1]
+                scale_y = frame.shape[0] / small_frame.shape[0]
+                for r in results:
+                    x, y, w, h = r["box"]
+                    r["box"] = [int(x*scale_x), int(y*scale_y), int(w*scale_x), int(h*scale_y)]
+                with lock:
+                    latest_results = results
+        time.sleep(0.01)
+
+# Start detection thread
+thread = threading.Thread(target=detection_thread, daemon=True)
+thread.start()
+
 while True:
-    # Read a frame from the webcam
     ret, frame = cap.read()
     if not ret:
         print("Error: Failed to capture frame.")
         break
+    # Resize for display performance
+    display_frame = cv2.resize(frame, (FRAME_WIDTH, int(frame.shape[0] * FRAME_WIDTH / frame.shape[1])))
+    with lock:
+        latest_frame = frame.copy()
+        results = list(latest_results)
 
-    # The 'fer' library detects both faces and emotions.
-    # It returns a list of dictionaries, one for each face found.
-    results = emotion_detector.detect_emotions(frame)
-
-    # Loop over each detected face
+    # Draw results
     for result in results:
-        # Get bounding box coordinates and the emotions dictionary
         x, y, w, h = result["box"]
         emotions = result["emotions"]
-        
-        # Determine the emotion with the highest confidence score
         dominant_emotion = max(emotions, key=emotions.get)
-
-        # Extract the face Region of Interest (ROI) for age and gender prediction
         face_roi = frame[y:y+h, x:x+w]
-        
-        # Proceed only if the ROI is valid (not empty)
         if face_roi.size != 0:
-            # Create a blob from the ROI to feed into the age/gender models
             blob = cv2.dnn.blobFromImage(face_roi, 1.0, (227, 227), MODEL_MEAN_VALUES, swapRB=False)
-
-            # Predict Gender
             gender_net.setInput(blob)
             gender_preds = gender_net.forward()
             gender = GENDER_LIST[gender_preds[0].argmax()]
-
-            # Predict Age
             age_net.setInput(blob)
             age_preds = age_net.forward()
             age = AGE_LIST[age_preds[0].argmax()]
-
-            # --- Display Results on the Frame ---
             label = f"{gender}, {age}, {dominant_emotion.capitalize()}"
-            
-            # Draw a blue bounding box around the face
-            cv2.rectangle(frame, (x, y), (x+w, y+h), (255, 0, 0), 2)
-
-            # Create a background for the text label for better readability
+            cv2.rectangle(display_frame, (x, y), (x+w, y+h), (255, 0, 0), 2)
             (text_width, text_height), baseline = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.8, 2)
-            cv2.rectangle(frame, (x, y - text_height - 10), (x + text_width, y), (255, 0, 0), -1)
+            cv2.rectangle(display_frame, (x, y - text_height - 10), (x + text_width, y), (255, 0, 0), -1)
+            cv2.putText(display_frame, label, (x, y - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
 
-            # Put the final text label on the frame
-            cv2.putText(frame, label, (x, y - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
-
-    # Display the processed frame in a window
-    cv2.imshow('Real-time Analysis', frame)
-
-    # Break the loop if the 'q' key is pressed
+    cv2.imshow('Real-time Analysis', display_frame)
     if cv2.waitKey(1) & 0xFF == ord('q'):
         break
 
-# --- Cleanup ---
-# Release the webcam and destroy all OpenCV windows
+stop_thread = True
+thread.join()
 cap.release()
 cv2.destroyAllWindows()
