@@ -1,76 +1,105 @@
-# Emotion, Age, and Gender Detector
+# Simple Face Detector
 
-This project is an advanced real-time face analysis application using Python and OpenCV. It detects faces from your webcam feed and predicts age, gender, and emotion using pre-trained deep learning models.
-
-## Features
-- Real-time face detection using a deep learning model (SSD + Caffe)
-- Age and gender prediction for each detected face
-- Emotion recognition using a pre-trained ONNX model
-- All predictions are displayed live on the webcam feed
-
-## Project Structure
-```
-your-project-folder/
-│
-├── models/
-│   ├── deploy.prototxt
-│   ├── res10_300x300_ssd_iter_140000.caffemodel
-│   ├── gender_deploy.prototxt
-│   ├── gender_net.caffemodel
-│   ├── age_deploy.prototxt
-│   ├── age_net.caffemodel
-│   └── emotion-ferplus-8.onnx
-│
-└── emotion_detector.py
-```
-
-## Setup Instructions
-
-### 1. Install Python
-Make sure you have Python 3.6 or newer installed. You can download it from https://www.python.org/downloads/
-
-### 2. Install Required Libraries
-Open a terminal or command prompt in your project folder and run:
-
-```bash
-pip install opencv-python numpy
-```
-
-### 3. Download Pre-trained Models
-Create a folder named `models` in your project directory. Download the following files and place them inside the `models` folder:
-
-- `deploy.prototxt`
-- `res10_300x300_ssd_iter_140000.caffemodel`
-- `gender_deploy.prototxt`
-- `gender_net.caffemodel`
-- `age_deploy.prototxt`
-- `age_net.caffemodel`
-- `emotion-ferplus-8.onnx`
-
-You can find these files by searching their names online. They are standard models used in many OpenCV and deep learning tutorials.
-
-### 4. Run the Application
-In your terminal, run:
-
-```bash
-python emotion_detector.py
-```
-
-A window will open showing your webcam feed. Detected faces will be highlighted with a box and labeled with predicted age, gender, and emotion.
-
-- Press `q` or close the window to exit.
-
-## Notes
-- Make sure your webcam is connected and accessible.
-- The application uses the default webcam (camera index 0).
-- For GUI features to work, do not use headless environments.
-- All models must be present in the `models` folder for the script to run.
-
-## Credits
-- Face detection: OpenCV DNN module (SSD + Caffe)
-- Age/Gender: Pre-trained Caffe models
-- Emotion: FER+ ONNX model
+A real-time face detection application using Python and OpenCV. This project uses your webcam to detect faces in live video, with options to blur detected faces, draw rectangles, and save snapshots.
 
 ---
 
-Enjoy your advanced face analysis application!
+## Table of Contents
+- [Features](#features)
+- [Requirements](#requirements)
+- [Installation](#installation)
+- [Usage](#usage)
+- [Code Overview](#code-overview)
+- [Concepts Used](#concepts-used)
+- [Troubleshooting](#troubleshooting)
+
+---
+
+## Features
+- Real-time face detection using Haar Cascade classifier
+- Toggle between drawing rectangles and blurring faces for privacy
+- Save snapshots of the current video frame
+- Performance optimizations: processes every Nth frame for efficiency
+- User-friendly controls:
+  - Press `b` to toggle blur effect
+  - Press `s` to save a snapshot
+  - Press `q` to quit the application
+
+## Requirements
+- Python 3.6 or higher
+- OpenCV (`opencv-python`)
+- A working webcam
+
+## Installation
+1. **Clone the repository:**
+   ```bash
+   git clone https://github.com/DZ1shetty/Simple-Face-Detection.git
+   cd Simple-Face-Detection
+   ```
+2. **(Optional but recommended) Create a virtual environment:**
+   ```bash
+   python -m venv .venv
+   .venv\Scripts\activate  # On Windows
+   source .venv/bin/activate  # On Linux/Mac
+   ```
+3. **Install dependencies:**
+   ```bash
+   pip install opencv-python
+   ```
+
+## Usage
+1. Make sure your webcam is connected and accessible.
+2. Run the script:
+   ```bash
+   python face_detector.py
+   ```
+3. Use the following controls during execution:
+   - `b`: Toggle blur effect on detected faces
+   - `s`: Save a snapshot of the current frame
+   - `q`: Quit the application
+
+## Code Overview
+The main logic is in `face_detector.py`:
+- Loads OpenCV's Haar Cascade for face detection
+- Captures video from your default webcam
+- Detects faces in real-time
+- Draws rectangles or blurs faces based on user input
+- Allows saving snapshots with detected faces
+
+### Example Code Snippet
+```python
+import cv2
+import time
+
+# Load Haar Cascade
+face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+cap = cv2.VideoCapture(0)
+
+while True:
+    ret, frame = cap.read()
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    faces = face_cascade.detectMultiScale(gray, 1.2, 5)
+    for (x, y, w, h) in faces:
+        cv2.rectangle(frame, (x, y), (x+w, y+h), (0, 255, 0), 2)
+    cv2.imshow('Face Detector', frame)
+    if cv2.waitKey(1) & 0xFF == ord('q'):
+        break
+cap.release()
+cv2.destroyAllWindows()
+```
+
+## Concepts Used
+- **OpenCV:** For image processing, video capture, and face detection
+- **Haar Cascade Classifier:** Pre-trained model for detecting faces
+- **Real-time video processing:** Using webcam frames in a loop
+- **Image manipulation:** Drawing rectangles, blurring regions, saving images
+- **Keyboard event handling:** For interactive controls
+
+## Troubleshooting
+- If you get an error about `cv2.imshow` not being implemented, ensure you are not using a headless environment and have the full `opencv-python` package installed (not `opencv-python-headless`).
+- Make sure your webcam is not being used by another application.
+- If you encounter permission errors, try running your terminal as administrator.
+
+---
+
+**For any issues, open an issue on the GitHub repository.**
