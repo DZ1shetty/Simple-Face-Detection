@@ -1,0 +1,17 @@
+# .gitignore
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.swp
+*.bak
+*.tmp
+*.log
+models/
+.env
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.sqlite3
+*.db

@@ -6,6 +6,7 @@ import urllib.request
 from fer import FER
 import threading
 import time
+import numpy as np
 
 # --- Function to Download Models ---
 def download_models():
@@ -62,13 +63,44 @@ GENDER_LIST = ['Male', 'Female']
 
 
 # --- Video Capture and Threaded Detection ---
-FRAME_WIDTH = 640  # Resize width for performance
-FRAME_SKIP = 2     # Process every Nth frame for detection
+
+FRAME_SKIP = 6  # Process every 6th frame for detection (even smoother)
 
 cap = cv2.VideoCapture(0)
 if not cap.isOpened():
     print("Error: Could not open video stream.")
     exit()
+
+# Set camera to highest supported resolution
+def set_max_resolution(cap):
+    # Try common high resolutions
+    for width, height in [(1920,1080), (1280,720), (1024,768), (800,600)]:
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+        actual_w = cap.get(cv2.CAP_PROP_FRAME_WIDTH)
+        actual_h = cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
+        if actual_w >= width and actual_h >= height:
+            break
+set_max_resolution(cap)
+def enhance_image(img):
+    # Very light sharpening kernel
+    kernel = np.array([[0, -1, 0], [-1, 4.5, -1], [0, -1, 0]])
+    sharp = cv2.filter2D(img, -1, kernel)
+    # Light contrast enhancement (CLAHE)
+    lab = cv2.cvtColor(sharp, cv2.COLOR_BGR2LAB)
+    l, a, b = cv2.split(lab)
+    clahe = cv2.createCLAHE(clipLimit=1.1, tileGridSize=(8,8))
+    cl = clahe.apply(l)
+    limg = cv2.merge((cl,a,b))
+    enhanced = cv2.cvtColor(limg, cv2.COLOR_LAB2BGR)
+    # Very mild color boost
+    hsv = cv2.cvtColor(enhanced, cv2.COLOR_BGR2HSV)
+    h, s, v = cv2.split(hsv)
+    s = cv2.add(s, 4)  # Very gentle saturation boost
+    s = np.clip(s, 0, 255)
+    hsv_boosted = cv2.merge((h, s, v))
+    vibrant = cv2.cvtColor(hsv_boosted, cv2.COLOR_HSV2BGR)
+    return vibrant
 
 latest_results = []
 latest_frame = None
@@ -84,17 +116,18 @@ def detection_thread():
         if frame is not None:
             frame_count += 1
             if frame_count % FRAME_SKIP == 0:
-                # Run detection on resized frame for speed
-                small_frame = cv2.resize(frame, (FRAME_WIDTH, int(frame.shape[0] * FRAME_WIDTH / frame.shape[1])))
+                # Run detection on a smaller frame for speed
+                detect_width = 480
+                small_frame = cv2.resize(frame, (detect_width, int(frame.shape[0] * detect_width / frame.shape[1])))
                 results = emotion_detector.detect_emotions(small_frame)
-                # Scale results back to original frame size
                 scale_x = frame.shape[1] / small_frame.shape[1]
                 scale_y = frame.shape[0] / small_frame.shape[0]
                 for r in results:
                     x, y, w, h = r["box"]
                     r["box"] = [int(x*scale_x), int(y*scale_y), int(w*scale_x), int(h*scale_y)]
                 with lock:
-                    latest_results = results
+                    if results:
+                        latest_results = results
         time.sleep(0.01)
 
 # Start detection thread
@@ -106,8 +139,8 @@ while True:
     if not ret:
         print("Error: Failed to capture frame.")
         break
-    # Resize for display performance
-    display_frame = cv2.resize(frame, (FRAME_WIDTH, int(frame.shape[0] * FRAME_WIDTH / frame.shape[1])))
+    # Enhance for display (no resizing, use full native resolution)
+    display_frame = enhance_image(frame)
     with lock:
         latest_frame = frame.copy()
         results = list(latest_results)
@@ -132,9 +165,25 @@ while True:
             cv2.rectangle(display_frame, (x, y - text_height - 10), (x + text_width, y), (255, 0, 0), -1)
             cv2.putText(display_frame, label, (x, y - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
 
-    cv2.imshow('Real-time Analysis', display_frame)
-    if cv2.waitKey(1) & 0xFF == ord('q'):
+
+    window_name = 'Real-time Analysis'
+    cv2.namedWindow(window_name, cv2.WND_PROP_FULLSCREEN)
+    # Track fullscreen state
+    if 'fullscreen_state' not in globals():
+        global fullscreen_state
+        fullscreen_state = True
+        cv2.setWindowProperty(window_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+
+    cv2.imshow(window_name, display_frame)
+    key = cv2.waitKey(1) & 0xFF
+    if key == ord('q'):
         break
+    elif key == ord('f'):
+        fullscreen_state = True
+        cv2.setWindowProperty(window_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+    elif key == ord('m'):
+        fullscreen_state = False
+        cv2.setWindowProperty(window_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_NORMAL)
 
 stop_thread = True
 thread.join()
