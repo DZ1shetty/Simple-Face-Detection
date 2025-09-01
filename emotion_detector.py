@@ -64,7 +64,9 @@ GENDER_LIST = ['Male', 'Female']
 
 # --- Video Capture and Threaded Detection ---
 
-FRAME_SKIP = 6  # Process every 6th frame for detection (even smoother)
+FRAME_SKIP = 6  # Initial value; will be adapted dynamically
+MIN_FRAME_SKIP = 3
+MAX_FRAME_SKIP = 10
 
 cap = cv2.VideoCapture(0)
 if not cap.isOpened():
@@ -102,20 +104,27 @@ def enhance_image(img):
     vibrant = cv2.cvtColor(hsv_boosted, cv2.COLOR_HSV2BGR)
     return vibrant
 
+
+# Tracking state
 latest_results = []
 latest_frame = None
 lock = threading.Lock()
 stop_thread = False
+trackers = None
+tracking_boxes = []
+tracking_labels = []
 
 def detection_thread():
     global latest_results, latest_frame, stop_thread
+    global trackers, tracking_boxes, tracking_labels, FRAME_SKIP
     frame_count = 0
     while not stop_thread:
         with lock:
             frame = latest_frame.copy() if latest_frame is not None else None
         if frame is not None:
             frame_count += 1
-            if frame_count % FRAME_SKIP == 0:
+            # Only run detection every FRAME_SKIP frames
+            if frame_count % FRAME_SKIP == 0 or trackers is None or len(tracking_boxes) == 0:
                 # Run detection on a smaller frame for speed
                 detect_width = 480
                 small_frame = cv2.resize(frame, (detect_width, int(frame.shape[0] * detect_width / frame.shape[1])))
@@ -128,11 +137,89 @@ def detection_thread():
                 with lock:
                     if results:
                         latest_results = results
+                        # Update trackers with new detections
+                        # Always use legacy namespace if available for both MultiTracker and TrackerKCF
+                        trackers = None
+                        tracker_factory = None
+                        # Prefer CSRT tracker for smoother tracking if available
+                        if hasattr(cv2, 'legacy') and hasattr(cv2.legacy, 'MultiTracker_create'):
+                            trackers = cv2.legacy.MultiTracker_create()
+                            if hasattr(cv2.legacy, 'TrackerCSRT_create'):
+                                tracker_factory = cv2.legacy.TrackerCSRT_create
+                            else:
+                                tracker_factory = cv2.legacy.TrackerKCF_create
+                        elif hasattr(cv2, 'MultiTracker_create'):
+                            trackers = cv2.MultiTracker_create()
+                            if hasattr(cv2, 'TrackerCSRT_create'):
+                                tracker_factory = cv2.TrackerCSRT_create
+                            else:
+                                tracker_factory = cv2.TrackerKCF_create
+                        else:
+                            raise RuntimeError("MultiTracker or TrackerCSRT/KCF is not available in your OpenCV installation.")
+                        tracking_boxes = []
+                        tracking_labels = []
+                        # For smoothing: keep a history of last N boxes for each track
+                        global box_history
+                        box_history = [[] for _ in results]
+                        for idx, r in enumerate(results):
+                            x, y, w, h = r["box"]
+                            tracker = tracker_factory()
+                            trackers.add(tracker, frame, (x, y, w, h))
+                            tracking_boxes.append([x, y, w, h])
+                            emotions = r["emotions"]
+                            dominant_emotion = max(emotions, key=emotions.get)
+                            tracking_labels.append(dominant_emotion)
+                            box_history[idx].append([x, y, w, h])
+                        # Adaptive frame skip: more faces = lower skip, fewer faces = higher skip
+                        num_faces = len(results)
+                        if num_faces >= 3:
+                            FRAME_SKIP = MIN_FRAME_SKIP
+                        elif num_faces == 2:
+                            FRAME_SKIP = max(MIN_FRAME_SKIP, int((MIN_FRAME_SKIP+MAX_FRAME_SKIP)//2))
+                        elif num_faces == 1:
+                            FRAME_SKIP = MAX_FRAME_SKIP
+                        else:
+                            FRAME_SKIP = MAX_FRAME_SKIP
+            else:
+                # Update tracking boxes
+                if trackers is not None:
+                    ok, boxes = trackers.update(frame)
+                    if ok:
+                        # Smoothing: moving average over last N positions
+                        SMOOTH_N = 4
+                        new_boxes = []
+                        for i, box in enumerate(boxes):
+                            box = list(map(int, box))
+                            if 'box_history' in globals() and i < len(box_history):
+                                box_history[i].append(box)
+                                if len(box_history[i]) > SMOOTH_N:
+                                    box_history[i].pop(0)
+                                # Compute average
+                                avg_box = [int(sum(coord[j] for coord in box_history[i]) / len(box_history[i])) for j in range(4)]
+                                new_boxes.append(avg_box)
+                            else:
+                                new_boxes.append(box)
+                        tracking_boxes = new_boxes
+                    # Grace period for lost tracks: if not ok, keep last boxes for a few frames
+                    else:
+                        if 'lost_count' not in globals():
+                            global lost_count
+                            lost_count = 0
+                        lost_count += 1
+                        if lost_count < 5:
+                            pass  # Keep last tracking_boxes
+                        else:
+                            tracking_boxes = []
+                            if 'box_history' in globals():
+                                box_history = []
+                            lost_count = 0
+            # Sleep a bit to reduce CPU usage
         time.sleep(0.01)
 
 # Start detection thread
 thread = threading.Thread(target=detection_thread, daemon=True)
 thread.start()
+
 
 while True:
     ret, frame = cap.read()
@@ -144,27 +231,45 @@ while True:
     with lock:
         latest_frame = frame.copy()
         results = list(latest_results)
+        boxes = list(tracking_boxes)
+        labels = list(tracking_labels)
 
-    # Draw results
-    for result in results:
-        x, y, w, h = result["box"]
-        emotions = result["emotions"]
-        dominant_emotion = max(emotions, key=emotions.get)
-        face_roi = frame[y:y+h, x:x+w]
-        if face_roi.size != 0:
-            blob = cv2.dnn.blobFromImage(face_roi, 1.0, (227, 227), MODEL_MEAN_VALUES, swapRB=False)
-            gender_net.setInput(blob)
-            gender_preds = gender_net.forward()
-            gender = GENDER_LIST[gender_preds[0].argmax()]
-            age_net.setInput(blob)
-            age_preds = age_net.forward()
-            age = AGE_LIST[age_preds[0].argmax()]
-            label = f"{gender}, {age}, {dominant_emotion.capitalize()}"
-            cv2.rectangle(display_frame, (x, y), (x+w, y+h), (255, 0, 0), 2)
-            (text_width, text_height), baseline = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.8, 2)
-            cv2.rectangle(display_frame, (x, y - text_height - 10), (x + text_width, y), (255, 0, 0), -1)
-            cv2.putText(display_frame, label, (x, y - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
-
+    # Draw tracked faces if available, else draw detection results
+    if boxes:
+        for i, (x, y, w, h) in enumerate(boxes):
+            face_roi = frame[y:y+h, x:x+w]
+            if face_roi.size != 0:
+                blob = cv2.dnn.blobFromImage(face_roi, 1.0, (227, 227), MODEL_MEAN_VALUES, swapRB=False)
+                gender_net.setInput(blob)
+                gender_preds = gender_net.forward()
+                gender = GENDER_LIST[gender_preds[0].argmax()]
+                age_net.setInput(blob)
+                age_preds = age_net.forward()
+                age = AGE_LIST[age_preds[0].argmax()]
+                label = f"{gender}, {age}, {labels[i].capitalize() if i < len(labels) else ''}"
+                cv2.rectangle(display_frame, (x, y), (x+w, y+h), (255, 0, 0), 2)
+                (text_width, text_height), baseline = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.8, 2)
+                cv2.rectangle(display_frame, (x, y - text_height - 10), (x + text_width, y), (255, 0, 0), -1)
+                cv2.putText(display_frame, label, (x, y - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+    else:
+        for result in results:
+            x, y, w, h = result["box"]
+            emotions = result["emotions"]
+            dominant_emotion = max(emotions, key=emotions.get)
+            face_roi = frame[y:y+h, x:x+w]
+            if face_roi.size != 0:
+                blob = cv2.dnn.blobFromImage(face_roi, 1.0, (227, 227), MODEL_MEAN_VALUES, swapRB=False)
+                gender_net.setInput(blob)
+                gender_preds = gender_net.forward()
+                gender = GENDER_LIST[gender_preds[0].argmax()]
+                age_net.setInput(blob)
+                age_preds = age_net.forward()
+                age = AGE_LIST[age_preds[0].argmax()]
+                label = f"{gender}, {age}, {dominant_emotion.capitalize()}"
+                cv2.rectangle(display_frame, (x, y), (x+w, y+h), (255, 0, 0), 2)
+                (text_width, text_height), baseline = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.8, 2)
+                cv2.rectangle(display_frame, (x, y - text_height - 10), (x + text_width, y), (255, 0, 0), -1)
+                cv2.putText(display_frame, label, (x, y - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
 
     window_name = 'Real-time Analysis'
     cv2.namedWindow(window_name, cv2.WND_PROP_FULLSCREEN)
