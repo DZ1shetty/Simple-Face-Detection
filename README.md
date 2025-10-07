@@ -1,11 +1,14 @@
 
+
 # Emotion, Age, and Gender Detector
 
 This project is a real-time emotion, age, and gender detection application using Python, OpenCV, and the `fer` library. It uses your webcam to analyze faces in live video, automatically downloads required models, and displays results on the video stream.
 
 ---
 
+
 ## Table of Contents
+
 - [Features](#features)
 - [Requirements](#requirements)
 - [Installation](#installation)
@@ -17,15 +20,22 @@ This project is a real-time emotion, age, and gender detection application using
 ---
 
 
+
 ## Features
+
 - Real-time emotion, age, and gender detection using webcam
 - Automatic download of required deep learning models (no manual steps)
 - Uses robust `fer` library for emotion recognition
 - Uses OpenCV DNN for age and gender prediction
+- Smoother face tracking with moving average smoothing and CSRT tracker (if available)
+- Grace period for lost tracks to reduce flicker
+- Adaptive detection frequency for optimal performance
 - Results are displayed live on the video stream
 
 
+
 ## Requirements
+
 - Python 3.7 or higher
 - OpenCV (`opencv-python`)
 - TensorFlow
@@ -34,41 +44,61 @@ This project is a real-time emotion, age, and gender detection application using
 - A working webcam
 
 
+
 ## Installation
+
 1. **Clone the repository:**
+
    ```bash
    git clone https://github.com/DZ1shetty/Simple-Face-Detection.git
    cd Simple-Face-Detection
    ```
+
 2. **(Optional but recommended) Create a virtual environment:**
+
    ```bash
    python -m venv .venv
    .venv\Scripts\activate  # On Windows
    source .venv/bin/activate  # On Linux/Mac
    ```
+
 3. **Install dependencies:**
+
    ```bash
    pip install opencv-python tensorflow fer moviepy
    ```
 
 
+
 ## Usage
+
 1. Make sure your webcam is connected and accessible.
+
 2. Run the script:
+
    ```bash
    python emotion_detector.py
    ```
+
 3. The script will automatically download the required models if not present.
+
 4. The webcam window will open and display live emotion, age, and gender predictions.
+
 5. Press `q` to quit the application.
 
 
+
 ## Code Overview
+
 The main logic is in `emotion_detector.py`:
+
 - Downloads age and gender models if not present
 - Loads models for age, gender, and emotion detection
 - Captures video from your default webcam
 - Detects faces and predicts emotion, age, and gender in real-time
+- Tracks faces smoothly between detections using CSRT/KCF tracker and moving average smoothing
+- Grace period for lost tracks to avoid flicker
+- Dynamically adapts detection frequency based on number of faces
 - Displays results on the video stream
 
 ### Example Code Snippet

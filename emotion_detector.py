@@ -2,6 +2,7 @@
 
 import cv2
 import os
+import sys
 import urllib.request
 from fer import FER
 import threading
@@ -9,11 +10,23 @@ import time
 import numpy as np
 
 # --- Function to Download Models ---
+def resource_path(*relative_parts):
+    """
+    Resolve a path inside the bundled app when packaged with PyInstaller.
+    Falls back to the local project path when running from source.
+    """
+    base_path = getattr(sys, '_MEIPASS', os.path.abspath('.'))
+    return os.path.join(base_path, *relative_parts)
+
+
 def download_models():
     """
     Checks for the age and gender models and downloads them if they are missing.
     """
-    models_dir = "models"
+    # When packaged with PyInstaller onefile, write/read models from a temp dir next to the exe.
+    # Prefer an existing "models" alongside the executable/cwd; otherwise create it.
+    exe_dir = os.path.dirname(sys.executable) if getattr(sys, 'frozen', False) else os.path.abspath('.')
+    models_dir = os.path.join(exe_dir, "models")
     if not os.path.exists(models_dir):
         os.makedirs(models_dir)
 
@@ -24,10 +37,16 @@ def download_models():
     gender_model_url = "https://github.com/pchunduri6/ComputerVision-ProjectIdeas/raw/master/Age_Gender_Detection/gender_net.caffemodel"
 
     # File paths
-    age_proto_path = os.path.join(models_dir, "age_deploy.prototxt")
-    age_model_path = os.path.join(models_dir, "age_net.caffemodel")
-    gender_proto_path = os.path.join(models_dir, "gender_deploy.prototxt")
-    gender_model_path = os.path.join(models_dir, "gender_net.caffemodel")
+    # If bundled as data (PyInstaller), prefer reading from the bundle; if missing, fallback to models_dir
+    bundled_age_proto = resource_path("models", "age_deploy.prototxt")
+    bundled_age_model = resource_path("models", "age_net.caffemodel")
+    bundled_gender_proto = resource_path("models", "gender_deploy.prototxt")
+    bundled_gender_model = resource_path("models", "gender_net.caffemodel")
+
+    age_proto_path = bundled_age_proto if os.path.exists(bundled_age_proto) else os.path.join(models_dir, "age_deploy.prototxt")
+    age_model_path = bundled_age_model if os.path.exists(bundled_age_model) else os.path.join(models_dir, "age_net.caffemodel")
+    gender_proto_path = bundled_gender_proto if os.path.exists(bundled_gender_proto) else os.path.join(models_dir, "gender_deploy.prototxt")
+    gender_model_path = bundled_gender_model if os.path.exists(bundled_gender_model) else os.path.join(models_dir, "gender_net.caffemodel")
 
     # Download files if they don't exist
     if not os.path.exists(age_proto_path):
@@ -98,8 +117,7 @@ def enhance_image(img):
     # Very mild color boost
     hsv = cv2.cvtColor(enhanced, cv2.COLOR_BGR2HSV)
     h, s, v = cv2.split(hsv)
-    s = cv2.add(s, 4)  # Very gentle saturation boost
-    s = np.clip(s, 0, 255)
+    s = np.clip(s + 4, 0, 255)  # Very gentle saturation boost
     hsv_boosted = cv2.merge((h, s, v))
     vibrant = cv2.cvtColor(hsv_boosted, cv2.COLOR_HSV2BGR)
     return vibrant
@@ -116,7 +134,7 @@ tracking_labels = []
 
 def detection_thread():
     global latest_results, latest_frame, stop_thread
-    global trackers, tracking_boxes, tracking_labels, FRAME_SKIP
+    global trackers, tracking_boxes, tracking_labels, FRAME_SKIP, box_history, lost_count
     frame_count = 0
     while not stop_thread:
         with lock:
@@ -143,17 +161,17 @@ def detection_thread():
                         tracker_factory = None
                         # Prefer CSRT tracker for smoother tracking if available
                         if hasattr(cv2, 'legacy') and hasattr(cv2.legacy, 'MultiTracker_create'):
-                            trackers = cv2.legacy.MultiTracker_create()
+                            trackers = cv2.legacy.MultiTracker_create()  # type: ignore
                             if hasattr(cv2.legacy, 'TrackerCSRT_create'):
-                                tracker_factory = cv2.legacy.TrackerCSRT_create
+                                tracker_factory = cv2.legacy.TrackerCSRT_create  # type: ignore
                             else:
-                                tracker_factory = cv2.legacy.TrackerKCF_create
+                                tracker_factory = cv2.legacy.TrackerKCF_create  # type: ignore
                         elif hasattr(cv2, 'MultiTracker_create'):
-                            trackers = cv2.MultiTracker_create()
+                            trackers = cv2.MultiTracker_create()  # type: ignore
                             if hasattr(cv2, 'TrackerCSRT_create'):
-                                tracker_factory = cv2.TrackerCSRT_create
+                                tracker_factory = cv2.TrackerCSRT_create  # type: ignore
                             else:
-                                tracker_factory = cv2.TrackerKCF_create
+                                tracker_factory = cv2.TrackerKCF_create  # type: ignore
                         else:
                             raise RuntimeError("MultiTracker or TrackerCSRT/KCF is not available in your OpenCV installation.")
                         tracking_boxes = []
@@ -190,7 +208,7 @@ def detection_thread():
                         new_boxes = []
                         for i, box in enumerate(boxes):
                             box = list(map(int, box))
-                            if 'box_history' in globals() and i < len(box_history):
+                            if i < len(box_history):
                                 box_history[i].append(box)
                                 if len(box_history[i]) > SMOOTH_N:
                                     box_history[i].pop(0)
@@ -204,13 +222,13 @@ def detection_thread():
                     else:
                         if 'lost_count' not in globals():
                             global lost_count
-                            lost_count = 0
-                        lost_count += 1
-                        if lost_count < 5:
-                            pass  # Keep last tracking_boxes
-                        else:
-                            tracking_boxes = []
-                            if 'box_history' in globals():
+                            lost_count += 1
+                            if lost_count < 5:
+                                pass  # Keep last tracking_boxes
+                            else:
+                                tracking_boxes = []
+                                box_history.clear()
+                                lost_count = 0
                                 box_history = []
                             lost_count = 0
             # Sleep a bit to reduce CPU usage
