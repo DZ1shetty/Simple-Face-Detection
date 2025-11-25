@@ -1,68 +1,49 @@
-
-
 # Emotion, Age, and Gender Detector
 
-This project is a real-time emotion, age, and gender detection application using Python, OpenCV, and the `fer` library. It uses your webcam to analyze faces in live video, automatically downloads required models, and displays results on the video stream.
+A robust, real-time application for detecting emotions, age, and gender from a webcam feed. Built with Python, OpenCV, and Deep Learning, this project features a modular architecture, stable tracking, and automatic model management.
 
 ---
-
 
 ## Table of Contents
 
 - [Features](#features)
+- [Project Structure](#project-structure)
 - [Requirements](#requirements)
 - [Installation](#installation)
 - [Usage](#usage)
-- [Code Overview](#code-overview)
-- [Concepts Used](#concepts-used)
+- [How It Works](#how-it-works)
 - [Troubleshooting](#troubleshooting)
 
 ---
 
-
-
 ## Features
 
-- Real-time emotion, age, and gender detection using webcam
-- Automatic download of required deep learning models (no manual steps)
-- Uses robust `fer` library for emotion recognition
-- Uses OpenCV DNN for age and gender prediction
-- Robust face tracking using OpenCV DNN (ResNet SSD) and IoU matching
-- Stable Age/Gender/Emotion predictions using history buffering (voting/averaging)
-- Automatic download of required deep learning models (no manual steps)
-- Uses robust `fer` library for emotion recognition
-- Results are displayed live on the video stream
+- **Real-time Analysis**: Simultaneous detection of Emotion, Age, and Gender.
+- **Robust Face Tracking**: Uses OpenCV DNN (ResNet SSD) for detection and an IoU (Intersection over Union) tracker to maintain face identities across frames.
+- **Stable Predictions**: Implements history buffering and voting/averaging mechanisms to prevent flickering results.
+- **Context-Aware Accuracy**: Applies intelligent padding (20%) to face crops for better model inference context.
+- **Modular Architecture**: Clean separation of concerns into Data, Logic, and UI components.
+- **Automatic Setup**: Automatically downloads required Caffe and TensorFlow models on first run.
+- **Performance Optimized**: Threaded detection loop and efficient visualization.
 
-## Configuration
+## Project Structure
 
-The application now uses a robust tracking system that automatically handles detection frequency and stability. 
-You can simply run the application without complex arguments.
+The codebase has been refactored into a professional, modular structure:
 
-- `--detect_width`: Width for detection frame resizing (default: 480). Lower values improve performance but may reduce accuracy.
-
-Example:
-```bash
-python emotion_detector.py --detect_width 320
-```
-
-## Testing
-
-To run the unit tests:
-
-```bash
-python test_emotion_detector.py
-```
+- **`emotion_detector.py`**: The main entry point. Orchestrates the application, handles threading, and manages the main loop.
+- **`model_loader.py`**: Handles the automatic downloading and loading of Caffe (Age/Gender) and FER (Emotion) models.
+- **`tracker.py`**: Contains the `FaceTracker` class. Implements IoU tracking logic, history buffers, and the core analysis pipeline.
+- **`visualizer.py`**: Manages all UI drawing operations (bounding boxes, labels, FPS counter, confidence bars).
+- **`utils.py`**: Helper functions for camera setup and image enhancement.
+- **`run.bat`**: Simple batch script to launch the application in the virtual environment.
 
 ## Requirements
 
-- Python 3.7 or higher
-- OpenCV (`opencv-python`)
+- Python 3.8+
+- OpenCV (`opencv-python`, `opencv-contrib-python`)
 - TensorFlow
-- fer
-- moviepy
-- A working webcam
-
-
+- FER (`fer`)
+- NumPy
 
 ## Installation
 
@@ -73,100 +54,63 @@ python test_emotion_detector.py
    cd Simple-Face-Detection
    ```
 
-2. **(Optional but recommended) Create a virtual environment:**
+2. **Create a virtual environment (Recommended):**
 
    ```bash
    python -m venv .venv
-   .venv\Scripts\activate  # On Windows
-   source .venv/bin/activate  # On Linux/Mac
+   # Windows
+   .venv\Scripts\activate
+   # Linux/Mac
+   source .venv/bin/activate
    ```
 
 3. **Install dependencies:**
 
    ```bash
-   pip install opencv-python tensorflow fer moviepy
+   pip install -r requirements.txt
    ```
-
-
+   *If `requirements.txt` is missing, install manually:*
+   ```bash
+   pip install opencv-contrib-python tensorflow fer numpy
+   ```
 
 ## Usage
 
-1. Make sure your webcam is connected and accessible.
+1. **Connect your webcam.**
 
-2. Run the script using the simple launcher:
+2. **Run the application:**
 
+   **Using the batch script (Windows):**
    ```bash
    .\run.bat
    ```
 
-   Or using Python directly:
-
+   **Using Python directly:**
    ```bash
    python emotion_detector.py
    ```
 
-3. The script will automatically download the required models if not present.
+3. **Controls:**
+   - The application window will open showing the live feed.
+   - Press **`q`** to quit the application.
 
-4. The webcam window will open and display live emotion, age, and gender predictions.
+## How It Works
 
-5. Press `q` to quit the application. Press `f` to toggle fullscreen.
-
-
-
-## Code Overview
-
-The main logic is in `emotion_detector.py`:
-
-- Downloads age and gender models if not present
-- Loads models for age, gender, and emotion detection
-- Captures video from your default webcam
-- Detects faces and predicts emotion, age, and gender in real-time
-- Tracks faces smoothly between detections using CSRT/KCF tracker and moving average smoothing
-- Grace period for lost tracks to avoid flicker
-- Dynamically adapts detection frequency based on number of faces
-- Displays results on the video stream
-
-### Example Code Snippet
-```python
-import cv2
-from fer import FER
-emotion_detector = FER(mtcnn=True)
-cap = cv2.VideoCapture(0)
-while True:
-   ret, frame = cap.read()
-   results = emotion_detector.detect_emotions(frame)
-   for result in results:
-      x, y, w, h = result["box"]
-      emotions = result["emotions"]
-      dominant_emotion = max(emotions, key=emotions.get)
-      cv2.rectangle(frame, (x, y), (x+w, y+h), (255, 0, 0), 2)
-      cv2.putText(frame, dominant_emotion, (x, y-10), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255,255,255), 2)
-   cv2.imshow('Emotion Detector', frame)
-   if cv2.waitKey(1) & 0xFF == ord('q'):
-      break
-cap.release()
-cv2.destroyAllWindows()
-```
-
-
-## Concepts Used
-- **OpenCV:** For image processing, video capture, and DNN-based age/gender prediction
-- **FER library:** For robust emotion detection using deep learning
-- **TensorFlow:** Backend for emotion recognition
-- **Automatic model download:** Script fetches required models if missing
-- **Real-time video processing:** Using webcam frames in a loop
-- **Image manipulation:** Drawing rectangles, overlaying text, displaying results
-
+1. **Initialization**: The `ModelManager` checks for model files. If missing, it downloads them from reliable sources.
+2. **Detection**: A background thread runs the ResNet SSD face detector to find faces in the current frame.
+3. **Tracking**: The `FaceTracker` matches new detections to existing faces using Intersection over Union (IoU). This assigns a stable ID to each face.
+4. **Analysis**:
+   - **Age/Gender**: Inferred using pre-trained Caffe models on the face crop.
+   - **Emotion**: Inferred using the FER library on a normalized, padded face crop.
+5. **Smoothing**: Results are stored in a history buffer. The displayed label is the "mode" (most frequent) of the last 10 frames, ensuring stability.
+6. **Visualization**: The `Visualizer` draws the results, including a confidence bar for the dominant emotion.
 
 ## Troubleshooting
-- If you get an error about `cv2.imshow` not being implemented, ensure you are not using a headless environment and have the full `opencv-python` package installed (not `opencv-python-headless`).
-- Make sure your webcam is not being used by another application.
-- If you encounter permission errors, try running your terminal as administrator.
-- If model downloads fail, check your internet connection and try again.
+
+- **"Error: Could not open video stream"**: Ensure your webcam is connected and not being used by another app (like Zoom or Teams).
+- **Slow Performance**: The application attempts to set the camera to a high resolution. If your PC is slow, you can modify `utils.py` to use a lower resolution (e.g., 640x480).
+- **Model Download Failures**: If the app hangs at "Downloading...", check your internet connection. You can also manually place the `.prototxt` and `.caffemodel` files in the `models/` directory.
 
 ---
 
-
----
-
-**For any issues, open an issue on the GitHub repository.**
+**For any issues, please open an issue on the GitHub repository.**
