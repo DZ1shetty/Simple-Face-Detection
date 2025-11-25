@@ -1,5 +1,6 @@
 import cv2
 import numpy as np
+import threading
 
 class FaceTracker:
     def __init__(self, model_manager, max_missing=10):
@@ -7,72 +8,76 @@ class FaceTracker:
         self.tracks = {}  # id -> {'box': [x,y,w,h], 'missing': 0, 'age_buffer': [], 'gender_buffer': [], 'emotion_buffer': []}
         self.max_missing = max_missing
         self.models = model_manager
+        self.lock = threading.Lock()
 
-    def update(self, detections, frame):
-        # detections: list of [x, y, w, h]
-        
-        # Match detections to existing tracks using IoU
-        matched_track_ids = set()
-        matched_detection_indices = set()
-
-        if self.tracks and detections:
-            track_ids = list(self.tracks.keys())
-            track_boxes = [self.tracks[tid]['box'] for tid in track_ids]
+    def update(self, detections, frame, run_analysis=True):
+        with self.lock:
+            # detections: list of [x, y, w, h]
             
-            # Simple distance matching (centroid)
+            # Match detections to existing tracks using IoU
+            matched_track_ids = set()
+            matched_detection_indices = set()
+
+            if self.tracks and detections:
+                track_ids = list(self.tracks.keys())
+                track_boxes = [self.tracks[tid]['box'] for tid in track_ids]
+                
+                # Simple distance matching (centroid)
+                for idx, det_box in enumerate(detections):
+                    dx, dy, dw, dh = det_box
+                    
+                    best_iou = 0
+                    best_tid = -1
+                    
+                    for i, t_box in enumerate(track_boxes):
+                        tid = track_ids[i]
+                        tx, ty, tw, th = t_box
+                        
+                        # Calculate IoU
+                        xA = max(dx, tx)
+                        yA = max(dy, ty)
+                        xB = min(dx+dw, tx+tw)
+                        yB = min(dy+dh, ty+th)
+                        interArea = max(0, xB - xA) * max(0, yB - yA)
+                        boxAArea = dw * dh
+                        boxBArea = tw * th
+                        iou = interArea / float(boxAArea + boxBArea - interArea)
+                        
+                        if iou > 0.3 and iou > best_iou: # Threshold for matching
+                            best_iou = iou
+                            best_tid = tid
+                    
+                    if best_tid != -1:
+                        matched_track_ids.add(best_tid)
+                        matched_detection_indices.add(idx)
+                        # Update track
+                        self.tracks[best_tid]['box'] = det_box
+                        self.tracks[best_tid]['missing'] = 0
+                        
+                        # Run analysis on this face
+                        if run_analysis:
+                            self.analyze_face(best_tid, frame, det_box)
+
+            # Create new tracks for unmatched detections
             for idx, det_box in enumerate(detections):
-                dx, dy, dw, dh = det_box
-                
-                best_iou = 0
-                best_tid = -1
-                
-                for i, t_box in enumerate(track_boxes):
-                    tid = track_ids[i]
-                    tx, ty, tw, th = t_box
-                    
-                    # Calculate IoU
-                    xA = max(dx, tx)
-                    yA = max(dy, ty)
-                    xB = min(dx+dw, tx+tw)
-                    yB = min(dy+dh, ty+th)
-                    interArea = max(0, xB - xA) * max(0, yB - yA)
-                    boxAArea = dw * dh
-                    boxBArea = tw * th
-                    iou = interArea / float(boxAArea + boxBArea - interArea)
-                    
-                    if iou > 0.3 and iou > best_iou: # Threshold for matching
-                        best_iou = iou
-                        best_tid = tid
-                
-                if best_tid != -1:
-                    matched_track_ids.add(best_tid)
-                    matched_detection_indices.add(idx)
-                    # Update track
-                    self.tracks[best_tid]['box'] = det_box
-                    self.tracks[best_tid]['missing'] = 0
-                    
-                    # Run analysis on this face
-                    self.analyze_face(best_tid, frame, det_box)
+                if idx not in matched_detection_indices:
+                    self.tracks[self.next_id] = {
+                        'box': det_box,
+                        'missing': 0,
+                        'age_buffer': [],
+                        'gender_buffer': [],
+                        'emotion_buffer': []
+                    }
+                    if run_analysis:
+                        self.analyze_face(self.next_id, frame, det_box)
+                    self.next_id += 1
 
-        # Create new tracks for unmatched detections
-        for idx, det_box in enumerate(detections):
-            if idx not in matched_detection_indices:
-                self.tracks[self.next_id] = {
-                    'box': det_box,
-                    'missing': 0,
-                    'age_buffer': [],
-                    'gender_buffer': [],
-                    'emotion_buffer': []
-                }
-                self.analyze_face(self.next_id, frame, det_box)
-                self.next_id += 1
-
-        # Remove missing tracks
-        for tid in list(self.tracks.keys()):
-            if tid not in matched_track_ids:
-                self.tracks[tid]['missing'] += 1
-                if self.tracks[tid]['missing'] > self.max_missing:
-                    del self.tracks[tid]
+            # Remove missing tracks
+            for tid in list(self.tracks.keys()):
+                if tid not in matched_track_ids:
+                    self.tracks[tid]['missing'] += 1
+                    if self.tracks[tid]['missing'] > self.max_missing:
+                        del self.tracks[tid]
 
     def analyze_face(self, tid, frame, box):
         x, y, w, h = box
@@ -137,35 +142,36 @@ class FaceTracker:
             print(f"Analysis error: {e}")
 
     def get_results(self):
-        results = []
-        for tid, data in self.tracks.items():
-            # Compute stable results
-            if not data['age_buffer']: continue
-            
-            # Gender: Mode
-            g_counts = {}
-            for g in data['gender_buffer']: g_counts[g] = g_counts.get(g, 0) + 1
-            if not g_counts: continue
-            stable_gender = max(g_counts, key=lambda k: g_counts[k])
-            
-            # Age: Average index -> lookup
-            avg_age_idx = int(sum(data['age_buffer']) / len(data['age_buffer']))
-            stable_age = self.models.AGE_LIST[avg_age_idx]
-            
-            # Emotion: Mode of labels, but also get avg confidence
-            e_counts = {}
-            total_conf = 0
-            for e, conf in data['emotion_buffer']: 
-                e_counts[e] = e_counts.get(e, 0) + 1
-                total_conf += conf
-            if not e_counts: continue
-            stable_emotion = max(e_counts, key=lambda k: e_counts[k])
-            avg_conf = total_conf / len(data['emotion_buffer'])
-            
-            results.append({
-                'box': data['box'],
-                'label': f"{stable_gender}, {stable_age}, {stable_emotion.capitalize()}",
-                'confidence': avg_conf,
-                'emotion': stable_emotion
-            })
-        return results
+        with self.lock:
+            results = []
+            for tid, data in self.tracks.items():
+                # Compute stable results
+                if not data['age_buffer']: continue
+                
+                # Gender: Mode
+                g_counts = {}
+                for g in data['gender_buffer']: g_counts[g] = g_counts.get(g, 0) + 1
+                if not g_counts: continue
+                stable_gender = max(g_counts, key=lambda k: g_counts[k])
+                
+                # Age: Average index -> lookup
+                avg_age_idx = int(sum(data['age_buffer']) / len(data['age_buffer']))
+                stable_age = self.models.AGE_LIST[avg_age_idx]
+                
+                # Emotion: Mode of labels, but also get avg confidence
+                e_counts = {}
+                total_conf = 0
+                for e, conf in data['emotion_buffer']: 
+                    e_counts[e] = e_counts.get(e, 0) + 1
+                    total_conf += conf
+                if not e_counts: continue
+                stable_emotion = max(e_counts, key=lambda k: e_counts[k])
+                avg_conf = total_conf / len(data['emotion_buffer'])
+                
+                results.append({
+                    'box': data['box'],
+                    'label': f"{stable_gender}, {stable_age}, {stable_emotion.capitalize()}",
+                    'confidence': avg_conf,
+                    'emotion': stable_emotion
+                })
+            return results

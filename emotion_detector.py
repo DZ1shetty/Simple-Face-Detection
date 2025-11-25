@@ -6,6 +6,7 @@ import argparse
 from model_loader import ModelManager
 from tracker import FaceTracker
 from visualizer import Visualizer
+from gesture_detector import GestureDetector
 from utils import set_max_resolution, enhance_image
 
 class EmotionDetectorApp:
@@ -15,8 +16,26 @@ class EmotionDetectorApp:
         self.stop_thread = False
         self.model_manager = ModelManager()
         self.face_tracker = None
+        self.gesture_detector = GestureDetector()
+        self.latest_gesture_results = []
+        self.latest_mask = None # Store mask for debugging
         self.visualizer = Visualizer()
         self.cap = None
+        
+        # Mode: 'Face' or 'Gesture'
+        self.mode = 'Face'
+        self.btn_rect = (160, 10, 200, 40) # x, y, w, h
+
+    def mouse_callback(self, event, x, y, flags, param):
+        if event == cv2.EVENT_LBUTTONDOWN:
+            bx, by, bw, bh = self.btn_rect
+            if bx <= x <= bx + bw and by <= y <= by + bh:
+                # Toggle Mode
+                if self.mode == 'Face':
+                    self.mode = 'Gesture'
+                else:
+                    self.mode = 'Face'
+                print(f"Switched to {self.mode} Mode")
 
     def load_resources(self):
         print('Loading models...')
@@ -41,7 +60,7 @@ class EmotionDetectorApp:
                 detected_boxes = []
                 for i in range(detections.shape[2]):
                     confidence = detections[0, 0, i, 2]
-                    if confidence > 0.5: # Confidence threshold
+                    if confidence > 0.3: # Lowered Confidence threshold for better detection
                         box = detections[0, 0, i, 3:7] * np.array([w, h, w, h])
                         (startX, startY, endX, endY) = box.astype('int')
                         
@@ -56,7 +75,21 @@ class EmotionDetectorApp:
                 
                 # Update tracker with new detections
                 if self.face_tracker:
-                    self.face_tracker.update(detected_boxes, frame)
+                    # OPTIMIZATION: Only run full face analysis (Age/Gender/Emotion) if in Face Mode
+                    run_analysis = (self.mode == 'Face')
+                    self.face_tracker.update(detected_boxes, frame, run_analysis=run_analysis)
+                
+                # Detect Gestures
+                # OPTIMIZATION: Only run gesture detection if in Gesture Mode
+                mask = None
+                if self.mode == 'Gesture':
+                    gestures, mask = self.gesture_detector.detect_gesture(frame, faces=detected_boxes)
+                else:
+                    gestures = []
+                    
+                with self.lock:
+                    self.latest_gesture_results = gestures
+                    self.latest_mask = mask
                 
             time.sleep(0.01) # Small sleep to prevent CPU hogging
 
@@ -79,6 +112,10 @@ class EmotionDetectorApp:
         thread.start()
 
         print('Press ''q'' to quit.')
+        
+        window_name = 'Emotion, Age, Gender Detector'
+        cv2.namedWindow(window_name)
+        cv2.setMouseCallback(window_name, self.mouse_callback)
 
         try:
             while True:
@@ -94,11 +131,37 @@ class EmotionDetectorApp:
                     self.latest_frame = frame.copy()
                     # Get results from tracker
                     results = self.face_tracker.get_results() if self.face_tracker else []
+                    gesture_results = self.latest_gesture_results
+                    mask_debug = self.latest_mask
 
-                # Draw results
-                display_frame = self.visualizer.draw_results(display_frame, results)
+                # Draw Mode Button
+                btn_text = f"Mode: {self.mode}"
+                display_frame = self.visualizer.draw_button(display_frame, btn_text, 
+                                                          (self.btn_rect[0], self.btn_rect[1]), 
+                                                          (self.btn_rect[2], self.btn_rect[3]), 
+                                                          active=(self.mode == 'Gesture'))
 
-                cv2.imshow('Emotion, Age, Gender Detector', display_frame)
+                # Draw results based on mode
+                if self.mode == 'Face':
+                    display_frame = self.visualizer.draw_results(display_frame, results)
+                    # Close mask window if switching back
+                    try: cv2.destroyWindow('Gesture Mask')
+                    except: pass
+                elif self.mode == 'Gesture':
+                    display_frame = self.visualizer.draw_gestures(display_frame, gesture_results)
+                    
+                    # Show Debug Mask
+                    if mask_debug is not None:
+                        # Resize for corner display
+                        small_mask = cv2.resize(mask_debug, (200, 150))
+                        small_mask = cv2.cvtColor(small_mask, cv2.COLOR_GRAY2BGR)
+                        cv2.putText(small_mask, "Debug Mask", (10, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+                        
+                        # Overlay on bottom right
+                        h, w = display_frame.shape[:2]
+                        display_frame[h-160:h-10, w-210:w-10] = small_mask
+
+                cv2.imshow(window_name, display_frame)
 
                 if cv2.waitKey(1) & 0xFF == ord('q'):
                     break

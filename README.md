@@ -18,7 +18,8 @@ A robust, real-time application for detecting emotions, age, and gender from a w
 
 ## Features
 
-- **Real-time Analysis**: Simultaneous detection of Emotion, Age, and Gender.
+- **Real-time Analysis**: Simultaneous detection of Emotion, Age, Gender, and Hand Gestures.
+- **Hand Gesture Recognition**: Detects gestures like "1 Finger", "2 Fingers", "Fist", "Open Palm", etc. Includes robust logic to handle arm noise and distinguish between similar shapes.
 - **Robust Face Tracking**: Uses OpenCV DNN (ResNet SSD) for detection and an IoU (Intersection over Union) tracker to maintain face identities across frames.
 - **Stable Predictions**: Implements history buffering and voting/averaging mechanisms to prevent flickering results.
 - **Context-Aware Accuracy**: Applies intelligent padding (20%) to face crops for better model inference context.
@@ -31,6 +32,7 @@ A robust, real-time application for detecting emotions, age, and gender from a w
 The codebase has been refactored into a professional, modular structure:
 
 - **`emotion_detector.py`**: The main entry point. Orchestrates the application, handles threading, and manages the main loop.
+- **`gesture_detector.py`**: Implements hand gesture recognition using skin color segmentation and convexity defects.
 - **`model_loader.py`**: Handles the automatic downloading and loading of Caffe (Age/Gender) and FER (Emotion) models.
 - **`tracker.py`**: Contains the `FaceTracker` class. Implements IoU tracking logic, history buffers, and the core analysis pipeline.
 - **`visualizer.py`**: Manages all UI drawing operations (bounding boxes, labels, FPS counter, confidence bars).
