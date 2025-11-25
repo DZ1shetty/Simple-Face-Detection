@@ -27,12 +27,31 @@ This project is a real-time emotion, age, and gender detection application using
 - Automatic download of required deep learning models (no manual steps)
 - Uses robust `fer` library for emotion recognition
 - Uses OpenCV DNN for age and gender prediction
-- Smoother face tracking with moving average smoothing and CSRT tracker (if available)
-- Grace period for lost tracks to reduce flicker
-- Adaptive detection frequency for optimal performance
+- Robust face tracking using OpenCV DNN (ResNet SSD) and IoU matching
+- Stable Age/Gender/Emotion predictions using history buffering (voting/averaging)
+- Automatic download of required deep learning models (no manual steps)
+- Uses robust `fer` library for emotion recognition
 - Results are displayed live on the video stream
 
+## Configuration
 
+The application now uses a robust tracking system that automatically handles detection frequency and stability. 
+You can simply run the application without complex arguments.
+
+- `--detect_width`: Width for detection frame resizing (default: 480). Lower values improve performance but may reduce accuracy.
+
+Example:
+```bash
+python emotion_detector.py --detect_width 320
+```
+
+## Testing
+
+To run the unit tests:
+
+```bash
+python test_emotion_detector.py
+```
 
 ## Requirements
 
@@ -74,7 +93,13 @@ This project is a real-time emotion, age, and gender detection application using
 
 1. Make sure your webcam is connected and accessible.
 
-2. Run the script:
+2. Run the script using the simple launcher:
+
+   ```bash
+   .\run.bat
+   ```
+
+   Or using Python directly:
 
    ```bash
    python emotion_detector.py
@@ -84,7 +109,7 @@ This project is a real-time emotion, age, and gender detection application using
 
 4. The webcam window will open and display live emotion, age, and gender predictions.
 
-5. Press `q` to quit the application.
+5. Press `q` to quit the application. Press `f` to toggle fullscreen.
 
 
 
