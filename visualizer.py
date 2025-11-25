@@ -15,7 +15,8 @@ class Visualizer:
             'happy': (0, 255, 255),    # Yellow
             'sad': (255, 0, 0),        # Blue
             'surprise': (255, 165, 0), # Orange
-            'gesture': (255, 255, 0)   # Cyan/Yellowish
+            'gesture': (255, 255, 0),  # Cyan/Yellowish
+            'object': (128, 128, 128)  # Gray for objects
         }
 
     def _draw_rounded_rect(self, img, pt1, pt2, color, thickness=1, r=15):
@@ -101,13 +102,17 @@ class Visualizer:
             gesture = res['gesture']
             
             # Use a distinct color for gestures
-            color = self.colors['gesture']
+            if gesture == 'Object':
+                color = self.colors['object']
+                label = f"Object"
+            else:
+                color = self.colors['gesture']
+                label = f"Gesture: {gesture}"
             
             # Draw Tech-style Corners
             self._draw_tech_corners(frame, x, y, w, h, color, length=20, thickness=2)
             
             # Label
-            label = f"Gesture: {gesture}"
             (text_width, text_height), baseline = cv2.getTextSize(label, self.font, 0.6, 1)
             
             # Label Position (Bottom of box to avoid conflict with face labels)

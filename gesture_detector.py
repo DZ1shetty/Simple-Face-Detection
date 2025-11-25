@@ -29,8 +29,10 @@ class GestureDetector:
         Returns:
             results: List of dictionaries containing gesture info.
             mask: The binary skin mask (for debugging).
+            feedback: String message suggesting where to move hand if noise is detected.
         '''
         results = []
+        feedback = None
         h_img, w_img = frame.shape[:2]
         total_pixels = h_img * w_img
         
@@ -93,9 +95,13 @@ class GestureDetector:
             epsilon = 0.02 * cv2.arcLength(cnt, True)
             approx = cv2.approxPolyDP(cnt, epsilon, True)
             
+            gesture_name = 'Unknown'
+            is_object = False
+
             # If it looks like a box (4-6 corners) and is very solid, it's likely furniture
             if len(approx) <= 6 and solidity > 0.90:
-                continue
+                is_object = True
+                gesture_name = 'Object'
             
             # EXTENT FILTER: Box vs Hand
             # Box fills its bounding rect almost perfectly (extent ~ 1.0)
@@ -103,70 +109,70 @@ class GestureDetector:
             rect_area = w * h
             extent = float(area) / rect_area
             if extent > 0.95: # Too perfect rectangle
-                continue
+                is_object = True
+                gesture_name = 'Object'
 
             hull_indices = cv2.convexHull(cnt, returnPoints=False)
             
-            gesture_name = 'Unknown'
-            
             try:
-                defects = cv2.convexityDefects(cnt, hull_indices)
-                
-                if defects is not None:
-                    count_defects = 0
+                if not is_object:
+                    defects = cv2.convexityDefects(cnt, hull_indices)
                     
-                    for j in range(defects.shape[0]):
-                        s, e, f, d = defects[j, 0]
-                        start = tuple(cnt[s][0])
-                        end = tuple(cnt[e][0])
-                        far = tuple(cnt[f][0])
+                    if defects is not None:
+                        count_defects = 0
                         
-                        # Triangle sides
-                        a = np.sqrt((end[0] - start[0])**2 + (end[1] - start[1])**2)
-                        b = np.sqrt((far[0] - start[0])**2 + (far[1] - start[1])**2)
-                        c = np.sqrt((end[0] - far[0])**2 + (end[1] - far[1])**2)
-                        
-                        if b * c == 0: continue
-
-                        cosine_angle = (b**2 + c**2 - a**2) / (2*b*c)
-                        cosine_angle = max(-1.0, min(1.0, cosine_angle))
-                        
-                        angle = np.arccos(cosine_angle) * 57
-                        
-                        # Strict Angle and Depth
-                        if angle <= 90 and d > 8000: 
-                            count_defects += 1
+                        for j in range(defects.shape[0]):
+                            s, e, f, d = defects[j, 0]
+                            start = tuple(cnt[s][0])
+                            end = tuple(cnt[e][0])
+                            far = tuple(cnt[f][0])
                             
-                    # Classification Logic
-                    if count_defects == 0:
-                        # 1 Finger: Tall (low aspect ratio) and not fully filling the box (low extent)
-                        # Relaxed solidity/extent check to account for arm inclusion
-                        if aspect_ratio < 0.6 and extent < 0.85: 
-                             gesture_name = '1 Finger'
-                        elif solidity > 0.85: # Slightly relaxed for organic fists
-                            gesture_name = 'Fist (0)'
+                            # Triangle sides
+                            a = np.sqrt((end[0] - start[0])**2 + (end[1] - start[1])**2)
+                            b = np.sqrt((far[0] - start[0])**2 + (far[1] - start[1])**2)
+                            c = np.sqrt((end[0] - far[0])**2 + (end[1] - far[1])**2)
+                            
+                            if b * c == 0: continue
+
+                            cosine_angle = (b**2 + c**2 - a**2) / (2*b*c)
+                            cosine_angle = max(-1.0, min(1.0, cosine_angle))
+                            
+                            angle = np.arccos(cosine_angle) * 57
+                            
+                            # Strict Angle and Depth
+                            if angle <= 90 and d > 8000: 
+                                count_defects += 1
+                                
+                        # Classification Logic
+                        if count_defects == 0:
+                            # 1 Finger: Tall (low aspect ratio) and not fully filling the box (low extent)
+                            # Relaxed solidity/extent check to account for arm inclusion
+                            if aspect_ratio < 0.6 and extent < 0.85: 
+                                 gesture_name = '1 Finger'
+                            elif solidity > 0.85: # Slightly relaxed for organic fists
+                                gesture_name = 'Fist (0)'
+                            else:
+                                 gesture_name = 'Object' # Ambiguous -> Object
+                        elif count_defects == 1:
+                            gesture_name = '2 Fingers'
+                        elif count_defects == 2:
+                            gesture_name = '3 Fingers'
+                        elif count_defects == 3:
+                            gesture_name = '4 Fingers'
+                        elif count_defects == 4:
+                            gesture_name = '5 Fingers'
                         else:
-                             continue # Ambiguous
-                    elif count_defects == 1:
-                        gesture_name = '2 Fingers'
-                    elif count_defects == 2:
-                        gesture_name = '3 Fingers'
-                    elif count_defects == 3:
-                        gesture_name = '4 Fingers'
-                    elif count_defects == 4:
-                        gesture_name = '5 Fingers'
-                    else:
-                        continue
-                        
-                    # Found a valid candidate
-                    best_candidate = {
-                        'box': [x, y, w, h],
-                        'gesture': gesture_name,
-                        'contour': cnt,
-                        'hull': hull,
-                        'center': (x + w//2, y + h//2)
-                    }
-                    break # Only take the best one
+                            gesture_name = 'Object' # Too many defects -> Object
+                
+                # Found a valid candidate (Hand or Object)
+                best_candidate = {
+                    'box': [x, y, w, h],
+                    'gesture': gesture_name,
+                    'contour': cnt,
+                    'hull': hull,
+                    'center': (x + w//2, y + h//2)
+                }
+                break # Only take the best one
             except Exception as e:
                 print(f'Gesture error: {e}')
 
@@ -205,10 +211,40 @@ class GestureDetector:
                 
                 results.append(best_candidate)
         else:
-            # No hand found
+            # No hand found, check for noise to give feedback
+            # Split mask into 4 quadrants to find the cleanest area
+            cx, cy = w_img // 2, h_img // 2
+            
+            # Define quadrants: (ROI, Name)
+            quadrants = [
+                (mask[0:cy, 0:cx], "Top-Left"),
+                (mask[0:cy, cx:w_img], "Top-Right"),
+                (mask[cy:h_img, 0:cx], "Bottom-Left"),
+                (mask[cy:h_img, cx:w_img], "Bottom-Right")
+            ]
+            
+            # Count noise (white pixels) in each quadrant
+            noise_counts = []
+            for q_img, name in quadrants:
+                count = cv2.countNonZero(q_img)
+                noise_counts.append((count, name))
+            
+            # Sort by noise (ascending) -> [0] is cleanest, [-1] is noisiest
+            noise_counts.sort(key=lambda x: x[0])
+            
+            best_zone_count, best_zone_name = noise_counts[0]
+            worst_zone_count, _ = noise_counts[-1]
+            
+            # Threshold: If worst zone has > 5% white pixels, it's noisy.
+            # We only warn if there IS noise.
+            quadrant_area = (w_img // 2) * (h_img // 2)
+            if worst_zone_count > (quadrant_area * 0.05):
+                feedback = f"Background Noisy! Try {best_zone_name}"
+
+            # Reset Tracking when no hand is found
             self.consecutive_frames = 0
             self.prev_center = None
             self.prev_box = None
             self.history.clear()
-                
-        return results, mask
+
+        return results, mask, feedback

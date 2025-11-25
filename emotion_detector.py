@@ -19,12 +19,14 @@ class EmotionDetectorApp:
         self.gesture_detector = GestureDetector()
         self.latest_gesture_results = []
         self.latest_mask = None # Store mask for debugging
+        self.latest_feedback = None # Store feedback message
         self.visualizer = Visualizer()
         self.cap = None
         
         # Mode: 'Face' or 'Gesture'
         self.mode = 'Face'
         self.btn_rect = (160, 10, 200, 40) # x, y, w, h
+        self.quit_warning_time = 0 # Timestamp for quit warning message
 
     def mouse_callback(self, event, x, y, flags, param):
         if event == cv2.EVENT_LBUTTONDOWN:
@@ -82,14 +84,16 @@ class EmotionDetectorApp:
                 # Detect Gestures
                 # OPTIMIZATION: Only run gesture detection if in Gesture Mode
                 mask = None
+                feedback = None
                 if self.mode == 'Gesture':
-                    gestures, mask = self.gesture_detector.detect_gesture(frame, faces=detected_boxes)
+                    gestures, mask, feedback = self.gesture_detector.detect_gesture(frame, faces=detected_boxes)
                 else:
                     gestures = []
                     
                 with self.lock:
                     self.latest_gesture_results = gestures
                     self.latest_mask = mask
+                    self.latest_feedback = feedback
                 
             time.sleep(0.01) # Small sleep to prevent CPU hogging
 
@@ -126,6 +130,7 @@ class EmotionDetectorApp:
                 
                 # Enhance for display
                 display_frame = enhance_image(frame)
+                h_frame, w_frame = display_frame.shape[:2]
                 
                 with self.lock:
                     self.latest_frame = frame.copy()
@@ -133,6 +138,7 @@ class EmotionDetectorApp:
                     results = self.face_tracker.get_results() if self.face_tracker else []
                     gesture_results = self.latest_gesture_results
                     mask_debug = self.latest_mask
+                    feedback_msg = self.latest_feedback
 
                 # Draw Mode Button
                 btn_text = f"Mode: {self.mode}"
@@ -140,6 +146,24 @@ class EmotionDetectorApp:
                                                           (self.btn_rect[0], self.btn_rect[1]), 
                                                           (self.btn_rect[2], self.btn_rect[3]), 
                                                           active=(self.mode == 'Gesture'))
+
+                # Check if window was closed (User pressed 'X')
+                try:
+                    if cv2.getWindowProperty(window_name, cv2.WND_PROP_VISIBLE) < 1:
+                        self.quit_warning_time = time.time()
+                        cv2.namedWindow(window_name)
+                        cv2.setMouseCallback(window_name, self.mouse_callback)
+                except:
+                    pass
+
+                # Draw Quit Warning if active
+                if time.time() - self.quit_warning_time < 2.0:
+                    cv2.rectangle(display_frame, (0, h_frame//2 - 50), (w_frame, h_frame//2 + 50), (0, 0, 0), -1)
+                    text = "Press 'q' to quit"
+                    text_size = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 1.5, 3)[0]
+                    text_x = (w_frame - text_size[0]) // 2
+                    text_y = (h_frame + text_size[1]) // 2
+                    cv2.putText(display_frame, text, (text_x, text_y), cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0, 0, 255), 3)
 
                 # Draw results based on mode
                 if self.mode == 'Face':
@@ -149,6 +173,11 @@ class EmotionDetectorApp:
                     except: pass
                 elif self.mode == 'Gesture':
                     display_frame = self.visualizer.draw_gestures(display_frame, gesture_results)
+                    
+                    # Show Feedback if available
+                    if feedback_msg:
+                        cv2.putText(display_frame, feedback_msg, (10, h_frame - 20), 
+                                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
                     
                     # Show Debug Mask
                     if mask_debug is not None:
